@@ -81,8 +81,8 @@ docker-compose ps
 
 ```
 .
-├── docker-compose.yml          # Infrastructure orchestration
-├── requirements.txt           # Python dependencies
+├── docker-compose.yml         # Infrastructure orchestration
+├── requirements.txt          # Python dependencies
 ├── dags/
 │   └── kafka_stream.py       # Airflow DAG for data ingestion
 ├── src/
