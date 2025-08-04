@@ -1,0 +1,209 @@
+networks:
+  confluent:
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    hostname: zookeeper
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - confluent
+
+  broker:
+    image: confluentinc/cp-server:7.4.0
+    hostname: broker
+    container_name: broker
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "9101:9101"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_METRIC_REPORTERS: io.confluent.metrics.reporter.ConfluentMetricsReporter
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_CONFLUENT_METRICS_REPORTER_BOOTSTRAP_SERVERS: broker:29092
+      KAFKA_CONFLUENT_METRICS_REPORTER_TOPIC_REPLICAS: 1
+      KAFKA_CONFLUENT_METRICS_ENABLE: 'true'
+      KAFKA_CONFLUENT_SUPPORT_CUSTOMER_ID: anonymous
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    networks:
+      - confluent
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.4.0
+    hostname: schema-registry
+    container_name: schema-registry
+    depends_on:
+      - broker
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'broker:29092'
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+    networks:
+      - confluent
+
+  control-center:
+    image: confluentinc/cp-enterprise-control-center:7.4.0
+    hostname: control-center
+    container_name: control-center
+    depends_on:
+      - broker
+      - schema-registry
+    ports:
+      - "9021:9021"
+    environment:
+      CONTROL_CENTER_BOOTSTRAP_SERVERS: 'broker:29092'
+      CONTROL_CENTER_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
+      CONTROL_CENTER_REPLICATION_FACTOR: 1
+      CONTROL_CENTER_INTERNAL_TOPICS_PARTITIONS: 1
+      CONTROL_CENTER_MONITORING_INTERCEPTOR_TOPIC_PARTITIONS: 1
+      CONFLUENT_METRICS_TOPIC_REPLICATION: 1
+      PORT: 9021
+    networks:
+      - confluent
+
+  postgres:
+    image: postgres:13
+    hostname: postgres
+    container_name: postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres_db_volume:/var/lib/postgresql/data
+    networks:
+      - confluent
+
+  airflow-webserver:
+    image: apache/airflow:2.6.0-python3.9
+    hostname: airflow-webserver
+    container_name: airflow-webserver
+    depends_on:
+      - postgres
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__CORE__FERNET_KEY: 'YlCImzjge_TeZc5FVOrXDCwM1w6YASrR-5CkiKxOaT4='
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
+      _PIP_ADDITIONAL_REQUIREMENTS: 'kafka-python==2.0.2 requests==2.31.0'
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'true'
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+    ports:
+      - "8082:8080"
+    command: >
+      bash -c "
+        airflow db init &&
+        airflow users create --username admin --firstname admin --lastname admin --email admin@admin.com --role Admin --password admin &&
+        airflow webserver
+      "
+    networks:
+      - confluent
+
+  airflow-scheduler:
+    image: apache/airflow:2.6.0-python3.9
+    hostname: airflow-scheduler
+    container_name: airflow-scheduler
+    depends_on:
+      - airflow-webserver
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__CORE__FERNET_KEY: 'YlCImzjge_TeZc5FVOrXDCwM1w6YASrR-5CkiKxOaT4='
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      _PIP_ADDITIONAL_REQUIREMENTS: 'kafka-python==2.0.2 requests==2.31.0'
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+    command: scheduler
+    networks:
+      - confluent
+
+  spark-master:
+    image: bitnami/spark:3.4
+    hostname: spark-master
+    container_name: spark-master
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    ports:
+      - "8083:8080"  # Spark Master Web UI
+      - "7077:7077"  # Spark Master Port
+    volumes:
+      - ./spark_apps:/opt/bitnami/spark/apps
+      - ./spark_stream.py:/opt/bitnami/spark/apps/spark_stream.py
+    networks:
+      - confluent
+
+  spark-worker:
+    image: bitnami/spark:3.4
+    hostname: spark-worker
+    container_name: spark-worker
+    depends_on:
+      - spark-master
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=1G
+      - SPARK_WORKER_CORES=1
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    ports:
+      - "8084:8081"  # Spark Worker Web UI
+    volumes:
+      - ./spark_apps:/opt/bitnami/spark/apps
+      - ./spark_stream.py:/opt/bitnami/spark/apps/spark_stream.py
+    networks:
+      - confluent
+
+  cassandra:
+    image: cassandra:4.1
+    hostname: cassandra
+    container_name: cassandra
+    environment:
+      - CASSANDRA_SEEDS=cassandra
+      - CASSANDRA_CLUSTER_NAME=TestCluster
+      - CASSANDRA_DC=datacenter1
+      - CASSANDRA_RACK=rack1
+      - CASSANDRA_ENDPOINT_SNITCH=GossipingPropertyFileSnitch
+      - CASSANDRA_NUM_TOKENS=128
+    ports:
+      - "9042:9042"  # Cassandra CQL Port
+      - "7000:7000"  # Cassandra Inter-node communication
+    volumes:
+      - cassandra_data:/var/lib/cassandra
+    networks:
+      - confluent
+    healthcheck:
+      test: ["CMD", "cqlsh", "-e", "describe keyspaces"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+volumes:
+  postgres_db_volume:
+  cassandra_data:
