@@ -1,19 +1,24 @@
 # Real-Time Data Pipeline
 
-A comprehensive real-time data streaming pipeline using Apache Airflow, Apache Kafka, and Apache Cassandra, all orchestrated with Docker Compose.
+This project implements a real-time data streaming pipeline that ingests data from an external API, orchestrates workflows using Apache Airflow, and leverages Apache Kafka for reliable message queuing and decoupling between data producers and consumers. Incoming data is first stored in PostgreSQL for backup or auditing purposes, then published to Kafka topics. Kafka integrates with the Confluent Schema Registry to ensure consistent message formats, and its operations are monitored via the Kafka Control Center. Apache Spark, running in a distributed setup with master and worker nodes, subscribes to the Kafka topics to process, transform, and enrich the streaming data. The processed data is then stored in Cassandra, a high-performance NoSQL database optimized for real-time reads and writes. ZooKeeper manages the Kafka brokers, ensuring high availability and coordination. The entire system is containerized using Docker, enabling easy deployment, environment consistency, and scalability.
 
 ## 🏗️ Architecture
 
 ![Project Architecture](docs/images/project_architecture.png)
 
-This project implements a complete ETL (Extract, Transform, Load) pipeline that:
-- **Extracts** user data from RandomUser API
-- **Transforms** and streams data through Kafka
-- **Loads** processed data into Cassandra database
+This project implements a complete ETL (Extract, Transform, Load) pipeline where:
+1. API data is pulled by Airflow DAGs.
+2. Airflow writes data to PostgreSQL (backup) and pushes it to Kafka topics.
+3. Kafka broadcasts the data to Spark for processing.
+4. Spark processes, transforms and pushes final results to Cassandra for querying or dashboarding.
+5. Schema Registry ensures all Kafka messages conform to an agreed format.
+6. Control Center and ZooKeeper manage and monitor the Kafka ecosystem.
+7. Everything runs on Docker, simplifying deployment
 
 ## 🛠️ Tech Stack
 
 - **🔄 Apache Airflow** - Workflow orchestration and scheduling
+- **🐘 PostgreSQL**- Relational backup and source of truth for incoming data
 - **📨 Apache Kafka** - Real-time data streaming
 - **🗄️ Apache Cassandra** - NoSQL database for storage
 - **⚡ Apache Spark** - Distributed data processing (cluster ready)
